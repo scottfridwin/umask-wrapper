@@ -42,11 +42,11 @@ jobs:
 
       - name: Test binary in ephemeral container
         run: |
-          docker run --rm -v $PWD/dist/${ARCH}:/tmp alpine:latest sh -c "
+          docker run --rm -v $PWD/dist/${ARCH}:/tmp alpine:latest sh -c '
             APP_UMASK=0077 /tmp/umask-wrapper touch /tmp/testfile && \
             ls -l /tmp/testfile && \
             rm -f /tmp/testfile
-          "
+          '
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
