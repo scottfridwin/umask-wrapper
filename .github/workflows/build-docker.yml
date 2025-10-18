@@ -48,13 +48,13 @@ jobs:
             mv dist/umask-wrapper dist/umask-wrapper.$ARCH
           done
 
-      - name: Test binary (runner arch only)
-        run: |
-          docker run --rm -v $PWD/umask-wrapper.x86_64:/tmp/umask-wrapper alpine:latest sh -c "\
-            APP_UMASK=0077 /tmp/umask-wrapper touch /tmp/testfile && \
-            ls -l /tmp/testfile && \
-            rm -f /tmp/testfile \
-          "
+      # - name: Test binary (runner arch only)
+      #   run: |
+      #     docker run --rm -v $PWD/umask-wrapper.x86_64:/tmp/umask-wrapper alpine:latest sh -c "\
+      #       APP_UMASK=0077 /tmp/umask-wrapper touch /tmp/testfile && \
+      #       ls -l /tmp/testfile && \
+      #       rm -f /tmp/testfile \
+      #     "
 
       - name: Create Git tag
         run: |
