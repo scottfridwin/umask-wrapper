@@ -34,9 +34,8 @@ jobs:
           mkdir -p dist/${ARCH}
           docker buildx build \
             --platform linux/${{ matrix.arch }} \
-            --load \
+            --output type=local,dest=dist/${ARCH} \
             -f Dockerfile.build .
-          mv umask-wrapper dist/${ARCH}/
 
       - name: Verify binary
         run: file dist/${ARCH}/umask-wrapper
