@@ -42,7 +42,14 @@ jobs:
 
       - name: Test binary in ephemeral container
         run: |
-          docker run --rm -v $PWD/dist/${ARCH}:/tmp alpine:latest sh -c '
+          case "${ARCH}" in
+            x86_64) ALPINE_IMG="alpine:latest" ;;
+            arm64) ALPINE_IMG="arm64v8/alpine:latest" ;;
+            armv7) ALPINE_IMG="arm32v7/alpine:latest" ;;
+            i386) ALPINE_IMG="i386/alpine:latest" ;;
+          esac
+
+          docker run --rm -v $PWD/dist/${ARCH}:/tmp $ALPINE_IMG sh -c '
             APP_UMASK=0077 /tmp/umask-wrapper touch /tmp/testfile && \
             ls -l /tmp/testfile && \
             rm -f /tmp/testfile
