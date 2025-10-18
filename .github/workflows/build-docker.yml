@@ -11,29 +11,37 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [x86_64, aarch64, armv7, i386]
+        arch: [amd64, arm64, arm/v7, 386]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set architecture variables
+      - name: Set architecture environment
         run: |
           case "${{ matrix.arch }}" in
-            x86_64) echo "ARCH=x86_64" >> $GITHUB_ENV; echo "DOCKER_IMAGE=alpine:latest" >> $GITHUB_ENV ;;
-            aarch64) echo "ARCH=arm64" >> $GITHUB_ENV; echo "DOCKER_IMAGE=arm64v8/alpine:latest" >> $GITHUB_ENV ;;
-            armv7) echo "ARCH=armv7" >> $GITHUB_ENV; echo "DOCKER_IMAGE=arm32v7/alpine:latest" >> $GITHUB_ENV ;;
-            i386) echo "ARCH=i386" >> $GITHUB_ENV; echo "DOCKER_IMAGE=i386/alpine:latest" >> $GITHUB_ENV ;;
+            amd64) echo "ARCH=x86_64" >> $GITHUB_ENV ;;
+            arm64) echo "ARCH=arm64" >> $GITHUB_ENV ;;
+            arm/v7) echo "ARCH=armv7" >> $GITHUB_ENV ;;
+            386) echo "ARCH=i386" >> $GITHUB_ENV ;;
           esac
 
-      - name: Build static binary in Docker
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build static binary with buildx
         run: |
           mkdir -p dist/${ARCH}
-          docker run --rm -v $PWD:/src -w /src $DOCKER_IMAGE sh -c "
-            apk add --no-cache musl-dev gcc make binutils && \
-            gcc -static -o umask-wrapper ./umask-wrapper.c && \
-            strip umask-wrapper
-          "
+          docker buildx build \
+            --platform linux/${{ matrix.arch }} \
+            --load \
+            -f- . <<'EOF'
+FROM alpine:latest
+COPY ./umask-wrapper.c /umask-wrapper.c
+RUN apk add --no-cache musl-dev gcc make binutils && \
+    gcc -static -o /umask-wrapper /umask-wrapper.c && \
+    strip /umask-wrapper
+EOF
           mv umask-wrapper dist/${ARCH}/
 
       - name: Verify binary
