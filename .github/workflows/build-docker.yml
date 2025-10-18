@@ -41,15 +41,16 @@ jobs:
 
             docker buildx build \
               --platform $PLATFORM \
-              --output type=local,dest=dist/$ARCH \
+              --output type=local,dest=dist \
               -f Dockerfile.build .
 
-            file dist/$ARCH/umask-wrapper
+            file dist/umask-wrapper
+            mv dist/umask-wrapper dist/umask-wrapper.$ARCH
           done
 
       - name: Test binary (runner arch only)
         run: |
-          docker run --rm -v $PWD/dist/x86_64:/tmp alpine:latest sh -c "\
+          docker run --rm -v $PWD/umask-wrapper.x86_64:/tmp/umask-wrapper alpine:latest sh -c "\
             APP_UMASK=0077 /tmp/umask-wrapper touch /tmp/testfile && \
             ls -l /tmp/testfile && \
             rm -f /tmp/testfile \
@@ -68,9 +69,9 @@ jobs:
           tag_name: ${{ env.version }}
           name: Release ${{ env.version }}
           files: |
-            dist/x86_64/umask-wrapper
-            dist/arm64/umask-wrapper
-            dist/armv7/umask-wrapper
-            dist/i386/umask-wrapper
+            dist/umask-wrapper.x86_64
+            dist/umask-wrapper.arm64
+            dist/umask-wrapper.armv7
+            dist/umask-wrapper.i386
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
