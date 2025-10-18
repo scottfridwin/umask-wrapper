@@ -1,0 +1,5 @@
+FROM alpine:latest
+COPY ./umask-wrapper.c /umask-wrapper.c
+RUN apk add --no-cache musl-dev gcc make binutils && \
+    gcc -static -o /umask-wrapper /umask-wrapper.c && \
+    strip /umask-wrapper
