@@ -46,14 +46,27 @@ jobs:
 
             file dist/umask-wrapper
             mv dist/umask-wrapper dist/umask-wrapper.$ARCH
+            chmod +x dist/umask-wrapper.$ARCH
           done
 
-      - name: Test binary (runner arch only)
+      - name: Test binary (runner architecture)
         run: |
-          docker run --rm -v $PWD:/tmp alpine:latest sh -c "\
-            APP_UMASK=0077 /tmp/umask-wrapper.x86_64 touch /tmp/testfile && \
-            ls -l /tmp/testfile && \
-            rm -f /tmp/testfile \
+          # Map host architecture to the binary suffix
+          case "$(uname -m)" in
+            x86_64) BIN=umask-wrapper.x86_64 ;;
+            aarch64) BIN=umask-wrapper.arm64 ;;
+            armv7l) BIN=umask-wrapper.armv7 ;;
+            i386|i686) BIN=umask-wrapper.i386 ;;
+            *) echo "Unsupported architecture $(uname -m)" && exit 1 ;;
+          esac
+
+          echo "Testing $BIN..."
+
+          docker run --rm -v $PWD/dist:/tmp alpine:latest sh -c "\
+            APP_UMASK=0077 /tmp/$BIN touch /tmp/testfile && \
+            PERMS=\$(stat -c '%a' /tmp/testfile) && \
+            echo 'Permissions: \$PERMS' && \
+            [ \"\$PERMS\" = \"600\" ] \
           "
 
       - name: Create Git tag
