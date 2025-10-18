@@ -61,6 +61,7 @@ jobs:
         with:
           name: umask-wrapper-${{ env.ARCH }}
           path: dist/${{ env.ARCH }}/umask-wrapper
+          compression-level: 0
 
   release:
     needs: build
@@ -72,19 +73,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: umask-wrapper-x86_64
-          path: dist/x86_64
+          path: dist
       - uses: actions/download-artifact@v4
         with:
           name: umask-wrapper-arm64
-          path: dist/arm64
+          path: dist
       - uses: actions/download-artifact@v4
         with:
           name: umask-wrapper-armv7
-          path: dist/armv7
+          path: dist
       - uses: actions/download-artifact@v4
         with:
           name: umask-wrapper-i386
-          path: dist/i386
+          path: dist
 
       - name: Create GitHub Release
         id: create_release
@@ -99,9 +100,9 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/x86_64/umask-wrapper
-            dist/arm64/umask-wrapper
-            dist/armv7/umask-wrapper
-            dist/i386/umask-wrapper
+            dist/umask-wrapper-x86_64
+            dist/umask-wrapper-arm64
+            dist/umask-wrapper-armv7
+            dist/umask-wrapper-i386
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
