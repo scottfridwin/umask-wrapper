@@ -14,44 +14,40 @@ env:
   version: 1.0.${{ github.run_number }}
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [amd64, arm64, arm/v7, 386]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set architecture environment
-        run: |
-          case "${{ matrix.arch }}" in
-            amd64) echo "ARCH=x86_64" >> $GITHUB_ENV ;;
-            arm64) echo "ARCH=arm64" >> $GITHUB_ENV ;;
-            arm/v7) echo "ARCH=armv7" >> $GITHUB_ENV ;;
-            386) echo "ARCH=i386" >> $GITHUB_ENV ;;
-          esac
 
       - name: Set up Docker Buildx (with QEMU)
         uses: docker/setup-buildx-action@v3
         with:
           install: true
 
-      - name: Build static binary
+      - name: Build all architectures
         run: |
-          mkdir -p dist/${ARCH}
-          docker buildx build \
-            --platform linux/${{ matrix.arch }} \
-            --output type=local,dest=dist/${ARCH} \
-            -f Dockerfile.build .
+          ARCHS=(x86_64 arm64 armv7 i386)
+          for ARCH in "${ARCHS[@]}"; do
+            echo "Building for $ARCH..."
+            mkdir -p dist/$ARCH
+            case $ARCH in
+              x86_64) PLATFORM=linux/amd64 ;;
+              arm64)  PLATFORM=linux/arm64 ;;
+              armv7)  PLATFORM=linux/arm/v7 ;;
+              i386)   PLATFORM=linux/386 ;;
+            esac
 
-      - name: Verify binary
-        run: file dist/${ARCH}/umask-wrapper
+            docker buildx build \
+              --platform $PLATFORM \
+              --output type=local,dest=dist/$ARCH \
+              -f Dockerfile.build .
 
-      # Only test the runner's native architecture
-      - name: Test binary (runner architecture only)
-        if: matrix.arch == 'amd64'
+            file dist/$ARCH/umask-wrapper
+          done
+
+      - name: Test binary (runner arch only)
         run: |
           docker run --rm -v $PWD/dist/x86_64:/tmp alpine:latest sh -c "\
             APP_UMASK=0077 /tmp/umask-wrapper touch /tmp/testfile && \
@@ -59,22 +55,14 @@ jobs:
             rm -f /tmp/testfile \
           "
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: umask-wrapper-${{ env.ARCH }}
-          path: dist/${{ env.ARCH }}/umask-wrapper
-          compression-level: 0
-
-      # Create Git tag using version
       - name: Create Git tag
-        if: github.ref == 'refs/heads/main'
         run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
           git tag ${{ env.version }}
           git push origin ${{ env.version }}
 
       - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.version }}
