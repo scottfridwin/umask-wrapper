@@ -1,0 +1,97 @@
+name: Build, Test & Release umask-wrapper (multi-arch)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64, armv7, i386]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set architecture variables
+        run: |
+          case "${{ matrix.arch }}" in
+            x86_64) echo "ARCH=x86_64" >> $GITHUB_ENV; echo "DOCKER_IMAGE=alpine:latest" >> $GITHUB_ENV ;;
+            aarch64) echo "ARCH=arm64" >> $GITHUB_ENV; echo "DOCKER_IMAGE=arm64v8/alpine:latest" >> $GITHUB_ENV ;;
+            armv7) echo "ARCH=armv7" >> $GITHUB_ENV; echo "DOCKER_IMAGE=arm32v7/alpine:latest" >> $GITHUB_ENV ;;
+            i386) echo "ARCH=i386" >> $GITHUB_ENV; echo "DOCKER_IMAGE=i386/alpine:latest" >> $GITHUB_ENV ;;
+          esac
+
+      - name: Build static binary in Docker
+        run: |
+          mkdir -p dist/${ARCH}
+          docker run --rm -v $PWD:/src -w /src $DOCKER_IMAGE sh -c "
+            apk add --no-cache musl-dev gcc make binutils && \
+            gcc -static -o umask-wrapper ./umask-wrapper.c && \
+            strip umask-wrapper
+          "
+          mv umask-wrapper dist/${ARCH}/
+
+      - name: Verify binary
+        run: file dist/${ARCH}/umask-wrapper
+
+      - name: Test binary in ephemeral container
+        run: |
+          docker run --rm -v $PWD/dist/${ARCH}:/tmp alpine:latest sh -c "
+            APP_UMASK=0077 /tmp/umask-wrapper touch /tmp/testfile && \
+            ls -l /tmp/testfile && \
+            rm -f /tmp/testfile
+          "
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: umask-wrapper-${{ matrix.arch }}
+          path: dist/${ARCH}/umask-wrapper
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: umask-wrapper-x86_64
+          path: dist/x86_64
+      - uses: actions/download-artifact@v4
+        with:
+          name: umask-wrapper-arm64
+          path: dist/arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: umask-wrapper-armv7
+          path: dist/armv7
+      - uses: actions/download-artifact@v4
+        with:
+          name: umask-wrapper-i386
+          path: dist/i386
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/x86_64/umask-wrapper
+            dist/arm64/umask-wrapper
+            dist/armv7/umask-wrapper
+            dist/i386/umask-wrapper
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
