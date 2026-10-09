@@ -1,5 +1,16 @@
-FROM alpine:latest
-COPY ./umask-wrapper.c /umask-wrapper.c
-RUN apk add --no-cache musl-dev gcc make binutils && \
-    gcc -static -o /umask-wrapper /umask-wrapper.c && \
-    strip /umask-wrapper
+# Builds a static umask-wrapper and runs test.sh against it on each target platform.
+# docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386 -f Dockerfile.build -o dist .
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS build
+RUN apk add --no-cache gcc musl-dev
+COPY umask-wrapper.c /src/
+RUN gcc -static -Os -Wall -Wextra -Werror -o /umask-wrapper /src/umask-wrapper.c \
+    && strip /umask-wrapper
+
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS test
+COPY --from=build /umask-wrapper /usr/local/bin/umask-wrapper
+COPY test.sh /test.sh
+RUN sh /test.sh /usr/local/bin/umask-wrapper
+
+# Exporting from the test stage means a binary is only produced if its tests passed
+FROM scratch
+COPY --from=test /usr/local/bin/umask-wrapper /umask-wrapper
