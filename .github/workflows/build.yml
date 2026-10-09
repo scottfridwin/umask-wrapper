@@ -1,0 +1,230 @@
+name: Build, Test & Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+  # No paths-ignore: "Test" is a required check and must report on every PR
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (e.g. v1.2.0). Leave empty to only build and test."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PLATFORMS: linux/amd64,linux/arm64,linux/arm/v7,linux/386
+
+jobs:
+  # ----------------------------------------------------------
+  # Test: build every platform; Dockerfile.build runs test.sh on each under QEMU
+  # ----------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build and test all platforms
+        run: docker buildx build --platform "$PLATFORMS" -f Dockerfile.build -o out .
+
+      - name: Collect binaries
+        run: |
+          mkdir dist
+          cp out/linux_amd64/umask-wrapper dist/umask-wrapper.x86_64
+          cp out/linux_arm64/umask-wrapper dist/umask-wrapper.arm64
+          cp out/linux_arm_v7/umask-wrapper dist/umask-wrapper.armv7
+          cp out/linux_386/umask-wrapper dist/umask-wrapper.i386
+          chmod +x dist/*
+          file dist/*
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: binaries
+          path: dist/
+          if-no-files-found: error
+
+  # ----------------------------------------------------------
+  # Release check: release when a merge to main changes the binary
+  # ----------------------------------------------------------
+  release-check:
+    name: Release check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      bump: ${{ steps.check.outputs.bump }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+
+      - name: Decide
+        id: check
+        run: |
+          CHANGED="$(git diff --name-only HEAD~1 HEAD)"
+          SUBJECT="$(git log -1 --format=%s)"
+          BODY="$(git log -1 --format=%b)"
+          echo "Subject: ${SUBJECT}"
+          echo "Changed files:"; echo "${CHANGED}"
+          if grep -qE '^(umask-wrapper\.c|Dockerfile\.build)$' <<< "$CHANGED"; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Conventional commit subject decides the bump; anything else (e.g. Renovate) is a patch
+          if [[ "$SUBJECT" =~ ^[a-z]+(\([^\)]*\))?!: ]] || grep -q '^BREAKING CHANGE' <<< "$BODY"; then
+            echo "bump=major" >> "$GITHUB_OUTPUT"
+          elif [[ "$SUBJECT" =~ ^feat(\([^\)]*\))?: ]]; then
+            echo "bump=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ----------------------------------------------------------
+  # Release: publish the exact binaries tested above, with checksums and provenance
+  # ----------------------------------------------------------
+  release:
+    name: Release
+    if: >-
+      !cancelled() && needs.test.result == 'success' && (
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '') ||
+        needs.release-check.outputs.release == 'true'
+      )
+    needs: [test, release-check]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Verify main branch
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Release can only be created from the main branch (got $GITHUB_REF)"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Download binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: binaries
+          path: dist
+
+      - name: Determine version
+        id: version
+        env:
+          VERSION_TAG: ${{ github.event.inputs.release_tag }}
+          BUMP: ${{ needs.release-check.outputs.bump }}
+        run: |
+          if [[ -z "$VERSION_TAG" ]]; then
+            # Older tags have no "v" prefix, so compare versions without it
+            LATEST=$(git tag --list | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            IFS=. read -r MAJ MIN PAT <<< "${LATEST:-0.0.0}"
+            case "$BUMP" in
+              major) VERSION_TAG="v$((MAJ + 1)).0.0" ;;
+              minor) VERSION_TAG="v${MAJ}.$((MIN + 1)).0" ;;
+              *)     VERSION_TAG="v${MAJ}.${MIN}.$((PAT + 1))" ;;
+            esac
+            echo "Auto release (${BUMP}): ${LATEST} -> ${VERSION_TAG}"
+          elif [[ ! "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_tag must look like v1.2.3 (got ${VERSION_TAG})"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/${VERSION_TAG}" >/dev/null; then
+            echo "::error::Tag ${VERSION_TAG} already exists"
+            exit 1
+          fi
+          echo "tag=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate checksums
+        working-directory: dist
+        run: |
+          sha256sum umask-wrapper.* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: dist/umask-wrapper.*
+
+      - name: Create git tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            dist/umask-wrapper.x86_64
+            dist/umask-wrapper.arm64
+            dist/umask-wrapper.armv7
+            dist/umask-wrapper.i386
+            dist/SHA256SUMS
+
+  # ----------------------------------------------------------
+  # Notify: bot-triggered runs on main email nobody, so open an issue
+  # ----------------------------------------------------------
+  notify-failure:
+    name: Notify failure
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, release-check, release]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Open or update CI failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          TITLE="CI failed on main"
+          BODY="Run: ${RUN_URL}
+          Commit: ${GITHUB_SHA::7} $(head -1 <<< "$COMMIT_MSG")"
+          EXISTING=$(gh issue list --state open --search "in:title \"${TITLE}\"" --json number --jq '.[0].number')
+          if [[ -n "$EXISTING" ]]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --assignee "$OWNER"
+          fi

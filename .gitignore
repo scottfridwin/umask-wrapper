@@ -1,6 +1,3 @@
 dist/
 *.o
-*.exe
-*.out
-/tmp/testfile
 umask-wrapper
