@@ -9,7 +9,7 @@ make        # builds ./umask-wrapper
 make test   # runs test.sh against it
 ```
 
-`test.sh` checks the resulting permissions, inherited umask, rejection of invalid values, exit codes, and that arguments and environment pass through unchanged.
+`test.sh` checks the resulting permissions, inherited umask, rejection of invalid values, exit codes, that arguments and environment pass through unchanged, and the `FILE__` variables (contents, trailing newlines, size and name limits, errors).
 
 ## Release binaries
 

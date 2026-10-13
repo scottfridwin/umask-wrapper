@@ -60,4 +60,51 @@ if [ "$out" = "a b|c" ]; then pass "arguments are passed through unchanged"; els
 out=$(FOO=bar "$BIN" sh -c 'echo $FOO')
 if [ "$out" = "bar" ]; then pass "environment is passed through"; else fail "environment is passed through"; fi
 
+expect_out() { # description expected actual
+    if [ "$3" = "$2" ]; then pass "$1"; else fail "$1 (expected '$2', got '$3')"; fi
+}
+
+printf 's3cret\n' > "$WORK/secret"
+out=$(FILE__DB_PASS="$WORK/secret" "$BIN" sh -c 'echo "${DB_PASS-unset}|${FILE__DB_PASS-unset}"')
+expect_out "FILE__NAME sets NAME and is removed" "s3cret|unset" "$out"
+
+printf 'a b\r\n\n' > "$WORK/crlf"
+out=$(FILE__X="$WORK/crlf" "$BIN" sh -c 'printf "%s|" "$X"')
+expect_out "trailing CR/LF is removed, spaces kept" "a b|" "$out"
+
+printf 'line1\nline2\n' > "$WORK/multi"
+out=$(FILE__PEM="$WORK/multi" "$BIN" sh -c 'printf "%s" "$PEM" | wc -l')
+expect_out "inner newlines are kept" "1" "$(echo $out)"
+
+: > "$WORK/empty"
+out=$(FILE__E="$WORK/empty" "$BIN" sh -c 'echo "${E-unset}|"')
+expect_out "an empty file sets an empty value" "|" "$out"
+
+out=$(A=old FILE__A="$WORK/secret" FILE__B="$WORK/secret" "$BIN" sh -c 'echo "$A|$B"')
+expect_out "several files, overriding an existing value" "s3cret|s3cret" "$out"
+
+out=$(FILE__S="$WORK/secret" APP_UMASK=0077 "$BIN" sh -c 'touch "$1"; echo "$S"; stat -c %a "$1"' _ "$WORK/f2")
+expect_out "works together with APP_UMASK" "s3cret 600" "$(echo $out)"
+
+for case in "missing:FILE__M=$WORK/nope" "bad name:FILE__1A=$WORK/secret" "empty name:FILE__=$WORK/secret" "directory:FILE__D=$WORK"; do
+    rm -f "$WORK/never"
+    env "${case#*:}" "$BIN" touch "$WORK/never" 2>/dev/null
+    code=$?
+    if [ "$code" -eq 125 ] && [ ! -e "$WORK/never" ]; then pass "FILE__ error (${case%%:*}) stops the command"; else fail "FILE__ error (${case%%:*}) stops the command (exit $code)"; fi
+done
+
+head -c 65537 /dev/zero | tr '\0' a > "$WORK/big"
+FILE__BIG="$WORK/big" "$BIN" true 2>/dev/null
+expect_exit "a file over 64 KiB is rejected" 125 $?
+head -c 65536 /dev/zero | tr '\0' a > "$WORK/max"
+out=$(FILE__MAX="$WORK/max" "$BIN" sh -c 'printf "%s" "$MAX" | wc -c')
+expect_out "a 64 KiB file is accepted" "65536" "$(echo $out)"
+
+printf 'a\0b' > "$WORK/nul"
+FILE__N="$WORK/nul" "$BIN" true 2>/dev/null
+expect_exit "a file with a NUL byte is rejected" 125 $?
+
+err=$(FILE__M="$WORK/nope" "$BIN" true 2>&1 >/dev/null)
+case "$err" in *s3cret*) fail "errors don't print file contents" ;; *) pass "errors don't print file contents" ;; esac
+
 exit $FAILED

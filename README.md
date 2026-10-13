@@ -7,6 +7,8 @@
 
 A tiny static binary that sets the [umask](https://man7.org/linux/man-pages/man2/umask.2.html) from the `APP_UMASK` environment variable and then runs your command. It is meant for containers whose image has no shell or no built-in umask setting (scratch, distroless and many hardened images), so you can control the permissions of the files they create on shared volumes.
 
+It can also load environment variables from files (`FILE__<NAME>=<path>`), so images that only read secrets from environment variables can use [Docker secrets](https://docs.docker.com/compose/how-tos/use-secrets/) instead of having the value in the compose file or `docker inspect`.
+
 > [!NOTE]
 > **AI disclosure:** This project is built and maintained with substantial help from AI coding assistants (GitHub Copilot). AI is used to write and modify the code, tests, documentation and CI configuration, and to manage the repository. Dependency updates are merged and released automatically, without human review, when the automated tests pass. Review the code and test it in your own environment before relying on it.
 
@@ -56,7 +58,7 @@ Exit codes follow the same convention as `env`:
 
 | Exit code | Meaning |
 | --- | --- |
-| 125 | umask-wrapper error (no command given, invalid `APP_UMASK`) |
+| 125 | umask-wrapper error (no command given, invalid `APP_UMASK`, a `FILE__` variable that can't be loaded) |
 | 126 | The command was found but could not be run (e.g. not executable) |
 | 127 | The command was not found |
 | anything else | The command's own exit code |
@@ -84,6 +86,30 @@ docker image inspect example/app:1.2.3 --format '{{json .Config.Entrypoint}} {{j
 ```
 
 Common values: `0022` (default on most systems; files `644`), `0002` (group-writable; files `664`), `0077` (private; files `600`).
+
+### Variables from files
+
+For every environment variable `FILE__<NAME>=<path>`, umask-wrapper sets `NAME` to the contents of the file and removes `FILE__<NAME>` before running the command:
+
+```yaml
+services:
+  app:
+    image: example/app:1.2.3
+    entrypoint: ["/umask-wrapper"]
+    command: ["/usr/local/bin/entrypoint.sh"]
+    environment:
+      - FILE__DB_PASS=/run/secrets/db_password  # the app sees DB_PASS
+    secrets:
+      - db_password
+    volumes:
+      - ./umask-wrapper:/umask-wrapper:ro
+```
+
+- Trailing newlines (`\n`, `\r\n`) are removed; everything else, including inner newlines, is kept. An empty file sets an empty value. An existing `NAME` is replaced.
+- `NAME` must be a valid variable name (`[A-Za-z_][A-Za-z0-9_]*`).
+- A file that can't be read, is larger than 64 KiB or contains a NUL byte stops the container with exit code 125; the error names the variable, never the file's contents.
+- `APP_UMASK` is optional; use either feature on its own.
+- The value is only in the command's process environment (`/proc/<pid>/environ`, readable by the same user), not in the container's configuration.
 
 ## Further reading
 
