@@ -1,12 +1,12 @@
 # Builds a static umask-wrapper and runs test.sh against it on each target platform.
 # docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386 -f Dockerfile.build -o dist .
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS build
+FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS build
 RUN apk add --no-cache gcc musl-dev
 COPY umask-wrapper.c /src/
 RUN gcc -static -Os -Wall -Wextra -Werror -o /umask-wrapper /src/umask-wrapper.c \
     && strip /umask-wrapper
 
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS test
+FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS test
 COPY --from=build /umask-wrapper /usr/local/bin/umask-wrapper
 COPY test.sh /test.sh
 RUN sh /test.sh /usr/local/bin/umask-wrapper
